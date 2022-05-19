@@ -15,7 +15,8 @@ import os
 import json
 import traceback as tb
 
-#TODO: resize images so that each duelist fits in its half of the window
+#TODO add a "save scores as" prompt at the end.
+#TODO display progress percent on main window
 
 
 class Picture:
@@ -43,7 +44,6 @@ class Picture:
             return cv2.imread(self.filename)
         else:
             return cv2.imread(os.path.join(directory, self.filename))
-
 
 class PictureList(list):
     """a list[Picture] instance with custom methods"""
@@ -90,8 +90,8 @@ class PictureList(list):
         if matches:
             self.remove(matches[0])
 
-    def sort_by_score(self):
-        self.sort(reverse=True, key=lambda pic:pic.score)
+    def sort_by_score(self, highest_scores_first=True):
+        self.sort(reverse=highest_scores_first, key=lambda pic:pic.score)
 
     def sort_by_filename(self):
         self.sort(key=lambda pic:pic.filename)
@@ -115,7 +115,9 @@ class PictureList(list):
     def random_pairs(self,
             nb_pairs=None,
             no_duplicate=True,
-            avoid_leftalones=True) -> list[list[Picture]]:
+            avoid_leftalones=True,
+            onlytop:int=None,
+            ) -> list[list[Picture]]:
         """returns a list of random pairs.
         if nb_pairs is left to None:
             if no_duplicate is True:
@@ -126,6 +128,13 @@ class PictureList(list):
                 returns an amount of pairs equal to len(self)
         """
         import random
+
+        cp = PictureList(self)
+        if onlytop is not None:
+            cp.sort_by_score()
+            print("ONLYTOP", onlytop)
+            # del cp[:onlytop]
+            cp = cp[:int(onlytop)]
         
         if no_duplicate:
             idlist = list(range(self.length))
@@ -167,7 +176,6 @@ class PictureList(list):
         logging.debug(f"loaded {self.length} pictures")
 
 
-
 # TODO: Improve later. For now, it's functional enough
 # TODO: check cointoss.GameParams, write a generic module from it and import it here
 class Params:
@@ -184,6 +192,8 @@ class Params:
         self.directory = "."
         self.no_duplicate = None
         self.loadsave = None
+        self.onlytop = None
+        self.savefile = None
         self.leftkey = "j"
         self.rightkey = "l"
         self.drawkey = "k"
@@ -227,7 +237,10 @@ class Tournament:
         print("</Scores>")
 
     def clean_exit(self):
-        self.quicksave()
+        if self.params.savefile:
+            self.save_to_file(self.params.savefile)
+        else:
+            self.quicksave()
         exit(0)
 
     #testme
@@ -236,6 +249,7 @@ class Tournament:
 
     #testme
     def save_to_file(self, filename):
+        logging.info(f"Saving to '{filename}'")
         self.pictures.save_to_file(filename)
 
     def quicksave(self):
@@ -250,6 +264,8 @@ class Tournament:
         # parser.add_argument("--max-rounds")
         parser.add_argument("--directory")
         parser.add_argument("--loadsave")
+        parser.add_argument("--onlytop")
+        parser.add_argument("--savefile")
         args = parser.parse_args()
         self.params.update_from_argparse_args(args)
 
@@ -262,7 +278,7 @@ class Tournament:
         print("  - {}: choose the image on the right".format(self.params.rightkey))
         print("  - {}: choose neither, make it a draw".format(self.params.drawkey))
 
-    def show_duel(self, pic_list:list[Picture]):
+    def show_duel(self, pic_list:list[Picture], progress_pct):
         """Displays all images in `pic_list` i a row within the same window"""
         victory_gain = 1
         loss_gain = -1
@@ -284,7 +300,7 @@ class Tournament:
         win_width = int(win_height * 16/9)
         # set up the window
         duel_text = " vs ".join(pic.name for pic in pic_list)
-        window_title = f"picture-tournament - {duel_text}"
+        window_title = f"picture-tournament - {duel_text} - [{progress_pct} %]"
         cv2.namedWindow(window_title, cv2.WINDOW_NORMAL)
         cv2.resizeWindow(window_title, win_width, win_height)
         x,y,win_width,win_height = cv2.getWindowImageRect(window_title)
@@ -376,27 +392,33 @@ class Tournament:
         else:
             self.pictures.load_from_directory(self.params.directory)
 
+        if self.params.onlytop is not None:
+            logging.info("Sorting the list by order of scores")
+            self.pictures.sort_by_score()
+
         logging.debug("Loaded {} pictures".format(self.pictures.length))
 
         duels_done = 0
         for round_id in range(nb_rounds):
-            logging.info("ROUND {}".format(round_id))
-            pairs = self.pictures.random_pairs(
-                    nb_pairs=None,
-                    # no_duplicate=False,
-                    no_duplicate=True,
-                    avoid_leftalones=True)
             if nb_matches is None:
                 nb_matches = len(pairs)
+            logging.info("ROUND {}".format(round_id))
+
+            pairs = self.pictures.random_pairs(
+                    nb_pairs=nb_matches,
+                    # no_duplicate=False,
+                    no_duplicate=True,
+                    avoid_leftalones=True,
+                    onlytop=self.params.onlytop)
             # logging.debug("result of random_pairs(): {}".format(
             #     "\n".join([str(x) for x in pairs])))
             # logging.debug("result of random_pairs(): {}".format(pairs))
             # logging.debug("/result")
             for match_id,pair in enumerate(pairs):
                 total_duels = nb_matches * nb_rounds
-                duels_pct = int(100 * (duels_done / total_duels))
-                logging.info("[{}%] round {}/{}, match {}/{}: dueling {} vs {}".format(duels_pct, round_id, nb_rounds, match_id, nb_matches, pair[0].name, pair[1].name))
-                self.show_duel(pair)
+                progress_pct = int(100 * (duels_done / total_duels))
+                logging.info("[{}%] round {}/{}, match {}/{}: dueling {} vs {}".format(progress_pct, round_id, nb_rounds, match_id, nb_matches, pair[0].name, pair[1].name))
+                self.show_duel(pair, progress_pct)
                 duels_done += 1
             self.quicksave()
 
@@ -415,7 +437,7 @@ def main():
         t.params.directory = "images"
     print(t.params.directory)
 
-    t.run(nb_rounds=2, nb_matches=10)
+    t.run(nb_rounds=4, nb_matches=5)
     t.print_scores()
 
     print("== Picture Tournament end ==")
