@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 
+# TODO: implement ELO system
+
 # get list of pictures
 # draw random pairs
 # for pair in pairs
@@ -16,7 +18,7 @@ import json
 import traceback as tb
 
 #TODO add a "save scores as" prompt at the end.
-#TODO display progress percent on main window
+#TODO remctor Params.XYZkey to Params.Keys.XYZ
 
 
 class Picture:
